@@ -1,0 +1,122 @@
+pipeline {
+    agent any
+    tools{
+        go 'go 1.16'
+    }
+    environment{
+        NEXUS_IP='192.168.33.90'
+        STG_IP='192.168.33.80'
+        PROD_IP='192.168.33.85'
+        NEXUS_REPO='word-cloud-build'
+        BRANCH='pipeline'
+    }
+    stages {
+        stage('Download Git repo') {
+            steps {
+                git 'https://github.com/mkolchyn/word-cloud-generator.git'
+            }
+        }
+        stage('Pre-build tests') {
+            steps {
+                sh '''cd /var/lib/jenkins/workspace/${JOB_NAME}
+                   make lint
+                   make test'''
+            }
+        }
+        stage('Build code and upload artifact to Nexus') {
+            steps {
+                sh '''export GOPATH=$WORKSPACE/go
+                      export PATH="$PATH:$(go env GOPATH)/bin"
+                       
+                      go get github.com/tools/godep
+                      go get github.com/smartystreets/goconvey
+                      go get github.com/GeertJohan/go.rice/rice
+                      go get github.com/wickett/word-cloud-generator/wordyapi
+                      go get github.com/gorilla/mux
+                      
+                      sed -i "s/1.DEVELOPMENT/1.${BUILD_NUMBER}/g" static/version
+                       
+                      GOOS=linux GOARCH=amd64 go build -o ./artifacts/word-cloud-generator -v 
+                       
+                      gzip -f artifacts/word-cloud-generator''' 
+                nexusArtifactUploader(
+                    nexusVersion: 'nexus3',
+                    protocol: 'http',
+                    nexusUrl: "${NEXUS_IP}:8081",
+                    groupId: "${BRANCH}",
+                    version: "1.${BUILD_NUMBER}",
+                    repository: "${NEXUS_REPO}",
+                    credentialsId: 'nexus-creds',
+                    artifacts: [
+                        [artifactId: 'word-cloud-generator',
+                         classifier: '',
+                         file: './artifacts/word-cloud-generator.gz',
+                         type: 'gz']
+                    ]
+                )
+            }
+        }
+        stage('Post-build tests') {
+            stages {
+                stage('Deploy on Staging'){
+                    environment{
+                        SSH_CREDS = credentials('slave_password')
+                    }
+                    steps{
+                        withCredentials([usernamePassword(credentialsId: 'nexus-creds', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+                            sh '''
+                            sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${STG_IP} -o StrictHostKeyChecking=no "sudo systemctl stop wordcloud"
+                            sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${STG_IP} "curl -X GET http://${NEXUS_IP}:8081/repository/${NEXUS_REPO}/${BRANCH}/word-cloud-generator/1.${BUILD_NUMBER}/word-cloud-generator-1.${BUILD_NUMBER}.gz --user ${NEXUS_USER}:${NEXUS_PASSWORD} -o /opt/wordcloud/word-cloud-generator.gz"
+                            sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${STG_IP} "gunzip -f /opt/wordcloud/word-cloud-generator.gz;chmod +x /opt/wordcloud/word-cloud-generator;sudo systemctl start wordcloud"
+                            '''
+                        }
+                    }
+                }    
+                stage('Parallel testing') {
+                    parallel {
+                        stage('Parallel testing - Stage 1'){
+                            steps{
+                                sh '''res=`curl -s -H "Content-Type: application/json" -d '{"text":"ths is a really really really important thing this is"}' http://${STG_IP}:8888/version | jq '. | length'`
+                                      if [ "1" != "$res" ]; then
+                                        exit 99
+                                      fi
+                                      
+                                      res=`curl -s -H "Content-Type: application/json" -d '{"text":"ths is a really really really important thing this is"}' http://${STG_IP}:8888/api | jq '. | length'`
+                                      if [ "7" != "$res" ]; then
+                                        exit 99
+                                      fi'''
+                            }
+                        }
+                        stage('Parallel testing - Stage 2'){
+                            steps{
+                                sh '''res=`curl -s -H "Content-Type: application/json" -d '{"text":"ths is a really really really important thing this is"}' http://${STG_IP}:8888/version | jq '. | length'`
+                                      if [ "1" != "$res" ]; then
+                                        exit 99
+                                      fi
+                                      
+                                      res=`curl -s -H "Content-Type: application/json" -d '{"text":"ths is a really really really important thing this is"}' http://${STG_IP}:8888/api | jq '. | length'`
+                                      if [ "7" != "$res" ]; then
+                                        exit 99
+                                      fi'''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Deploy on Production'){
+            environment{
+                SSH_CREDS = credentials('slave_password')
+            }
+            steps{
+                withCredentials([usernamePassword(credentialsId: 'nexus-creds', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+                    sh '''
+                    sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${PROD_IP} -o StrictHostKeyChecking=no "sudo systemctl stop wordcloud"
+                    sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${PROD_IP} "curl -X GET http://${NEXUS_IP}:8081/repository/${NEXUS_REPO}/${BRANCH}/word-cloud-generator/1.${BUILD_NUMBER}/word-cloud-generator-1.${BUILD_NUMBER}.gz --user ${NEXUS_USER}:${NEXUS_PASSWORD} -o /opt/wordcloud/word-cloud-generator.gz"
+                    sshpass -p ${SSH_CREDS_PSW} ssh ${SSH_CREDS_PSW}@${PROD_IP} "gunzip -f /opt/wordcloud/word-cloud-generator.gz;chmod +x /opt/wordcloud/word-cloud-generator;sudo systemctl start wordcloud"
+                    '''
+                }
+            }
+        }
+    }
+}
