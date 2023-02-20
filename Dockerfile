@@ -1,3 +1,6 @@
 FROM alpine:latest
-COPY ./staging/word-cloud-generator /opt
+RUN ls -la /
+RUN pwd
+RUN ls -la
+COPY ./staging/word-cloud-generator .
 EXPOSE 8888
