@@ -18,6 +18,7 @@ pipeline {
                 docker { 
                     image 'golang:1.16'
                     reuseNode true
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
                 }
             }
 //             tools{
@@ -35,6 +36,7 @@ pipeline {
                 docker { 
                     image 'golang:1.16'
                     reuseNode true
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
                 }
             }
             steps {
@@ -95,7 +97,7 @@ pipeline {
                             agent { 
                                 dockerfile {
                                     filename 'Dockerfile'
-                                    args '-p 8888:8888 --name staging'
+                                    args '-p 8888:8888 --name staging -v /var/run/docker.sock:/var/run/docker.sock'
                                     reuseNode true
                                 }
                             }
