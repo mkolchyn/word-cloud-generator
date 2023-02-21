@@ -14,9 +14,15 @@ pipeline {
             }
         }
         stage('Pre-build tests') {
-            tools{
-                go 'go 1.16'
+            agent {
+                docker { 
+                    image 'golang:1.16'
+                    reuseNode true
+                }
             }
+//             tools{
+//                 go 'go 1.16'
+//             }
             steps {
                 sh '''
                   pwd
