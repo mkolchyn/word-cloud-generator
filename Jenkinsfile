@@ -1,7 +1,7 @@
 pipeline {
     agent any
     environment{
-        NEXUS_IP='192.168.33.90'
+        NEXUS_IP='nexus'
         STG_IP='localhost'
         PROD_IP='192.168.33.85'
         NEXUS_REPO='word-cloud-build'
